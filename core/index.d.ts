@@ -830,6 +830,16 @@ export interface IDE {
 
   getWorkspaceDirs(): Promise<string[]>;
 
+  /**
+   * Convert a workspace URI (file://, vscode-remote://, etc.)
+   * into a filesystem path appropriate for where terminal commands
+   * should run.
+   *
+   * Implementations that already return plain paths can just return
+   * the input.
+   */
+  uriToFsPath(uri: string): Promise<string>;
+
   fileExists(fileUri: string): Promise<boolean>;
 
   writeFile(path: string, contents: string): Promise<void>;

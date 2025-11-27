@@ -199,11 +199,21 @@ class VsCodeIde implements IDE {
   }
 
   getIdeInfo(): Promise<IdeInfo> {
+    // vscode.env.remoteName can be undefined, "ssh-remote", "dev-container", etc.
+    // When connected to SSH remote, it should be "ssh-remote"
+    // We should pass through the actual value, not default to "local"
+    const remoteName = vscode.env.remoteName || "";
+
+    // DEBUG: Log what VS Code is reporting
+    console.log(
+      `[Continue] VsCodeIde.getIdeInfo: vscode.env.remoteName="${vscode.env.remoteName}", returning remoteName="${remoteName}"`,
+    );
+
     return Promise.resolve({
       ideType: "vscode",
       name: vscode.env.appName,
       version: vscode.version,
-      remoteName: vscode.env.remoteName || "local",
+      remoteName: remoteName,
       extensionVersion: getExtensionVersion(),
       isPrerelease: isExtensionPrerelease(),
     });
@@ -291,7 +301,22 @@ class VsCodeIde implements IDE {
   }
 
   async getWorkspaceDirs(): Promise<string[]> {
-    return this.ideUtils.getWorkspaceDirectories().map((uri) => uri.toString());
+    const dirs = this.ideUtils
+      .getWorkspaceDirectories()
+      .map((uri) => uri.toString());
+    console.log(
+      `[Continue] VsCodeIde.getWorkspaceDirs: returning ${dirs.length} dirs: ${JSON.stringify(dirs)}`,
+    );
+    return dirs;
+  }
+
+  async uriToFsPath(uri: string): Promise<string> {
+    const parsed = vscode.Uri.parse(uri);
+    // vscode.Uri.fsPath works for:
+    //   - file://... (local workspace)
+    //   - vscode-remote://ssh-remote+host/... (SSH)
+    //   - vscode-remote://dev-container+... (Dev Containers)
+    return parsed.fsPath;
   }
 
   async writeFile(fileUri: string, contents: string): Promise<void> {
@@ -331,7 +356,7 @@ class VsCodeIde implements IDE {
 
   async runCommand(
     command: string,
-    options: TerminalOptions = { reuseTerminal: true },
+    options: TerminalOptions & { cwd?: string } = { reuseTerminal: true },
   ): Promise<void> {
     let terminal: vscode.Terminal | undefined;
     if (vscode.window.terminals.length && options.reuseTerminal) {
@@ -345,10 +370,18 @@ class VsCodeIde implements IDE {
     }
 
     if (!terminal) {
-      terminal = vscode.window.createTerminal(options?.terminalName);
+      // Create terminal with cwd if provided
+      // VS Code will automatically handle remote paths correctly
+      const terminalOptions: vscode.TerminalOptions = {
+        name: options?.terminalName,
+      };
+      if (options?.cwd) {
+        terminalOptions.cwd = vscode.Uri.file(options.cwd);
+      }
+      terminal = vscode.window.createTerminal(terminalOptions);
     }
     terminal.show();
-    terminal.sendText(command, false);
+    terminal.sendText(command, true); // true = send newline
   }
 
   async saveFile(fileUri: string): Promise<void> {

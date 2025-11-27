@@ -152,6 +152,10 @@ export class MessageIde implements IDE {
     return await this.request("getWorkspaceDirs", undefined);
   }
 
+  async uriToFsPath(uri: string): Promise<string> {
+    return await this.request("uriToFsPath", uri);
+  }
+
   async showLines(
     fileUri: string,
     startLine: number,

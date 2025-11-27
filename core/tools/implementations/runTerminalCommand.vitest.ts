@@ -25,6 +25,7 @@ describe("runTerminalCommandImpl", () => {
   // Setup mocks and spies
   const mockGetIdeInfo = vi.fn();
   const mockGetWorkspaceDirs = vi.fn();
+  const mockUriToFsPath = vi.fn();
   const mockOnPartialOutput = vi.fn();
   const mockRunCommand = vi.fn();
 
@@ -48,6 +49,19 @@ describe("runTerminalCommandImpl", () => {
     mockGetWorkspaceDirs.mockReturnValue(
       Promise.resolve([`file://${tempDir}`]),
     );
+    // Default uriToFsPath implementation - convert file:// URIs, pass through others
+    mockUriToFsPath.mockImplementation(async (uri: string) => {
+      if (uri.startsWith("file://")) {
+        return fileURLToPath(uri);
+      }
+      // For vscode-remote:// URIs, simulate what VS Code does
+      if (uri.startsWith("vscode-remote://")) {
+        // Extract path from vscode-remote:// URI
+        const match = uri.match(/vscode-remote:\/\/[^/]+(.+)/);
+        return match ? match[1] : "/";
+      }
+      return uri;
+    });
   });
 
   afterEach(async () => {
@@ -94,6 +108,7 @@ describe("runTerminalCommandImpl", () => {
     const mockIde = {
       getIdeInfo: mockGetIdeInfo,
       getWorkspaceDirs: mockGetWorkspaceDirs,
+      uriToFsPath: mockUriToFsPath,
       runCommand: mockRunCommand,
       // Add stubs for other required IDE methods
       getIdeSettings: vi.fn(),
@@ -602,6 +617,82 @@ describe("runTerminalCommandImpl", () => {
           ),
         ).resolves.toBeDefined();
       });
+
+      it("should handle SSH remote workspaces using uriToFsPath", async () => {
+        const sshUri =
+          "vscode-remote://ssh-remote+my-server/home/gcurell/project";
+        mockGetWorkspaceDirs.mockResolvedValue([sshUri]);
+        mockUriToFsPath.mockResolvedValue("/home/gcurell/project");
+
+        const extras = createMockExtras({ remoteName: "ssh-remote" });
+
+        await expect(
+          runTerminalCommandImpl(
+            { command: "echo test", waitForCompletion: true },
+            extras,
+          ),
+        ).resolves.toBeDefined();
+
+        expect(mockUriToFsPath).toHaveBeenCalledWith(sshUri);
+      });
+
+      it("should handle dev-container URIs using uriToFsPath", async () => {
+        const devContainerUri =
+          "vscode-remote://dev-container+abc123/workspace";
+        mockGetWorkspaceDirs.mockResolvedValue([devContainerUri]);
+        mockUriToFsPath.mockResolvedValue("/workspace");
+
+        const extras = createMockExtras({ remoteName: "dev-container" });
+
+        await expect(
+          runTerminalCommandImpl(
+            { command: "echo test", waitForCompletion: true },
+            extras,
+          ),
+        ).resolves.toBeDefined();
+
+        expect(mockUriToFsPath).toHaveBeenCalledWith(devContainerUri);
+      });
+
+      it("should fall back gracefully when uriToFsPath throws", async () => {
+        const remoteUri =
+          "vscode-remote://ssh-remote+my-server/home/gcurell/project";
+        mockGetWorkspaceDirs.mockResolvedValue([remoteUri]);
+        mockUriToFsPath.mockRejectedValue(new Error("uriToFsPath failed"));
+
+        const extras = createMockExtras({ remoteName: "ssh-remote" });
+
+        // Should still work by falling back to process.cwd() or HOME
+        await expect(
+          runTerminalCommandImpl(
+            { command: "echo test", waitForCompletion: true },
+            extras,
+          ),
+        ).resolves.toBeDefined();
+
+        expect(mockUriToFsPath).toHaveBeenCalledWith(remoteUri);
+      });
+
+      it("should prefer uriToFsPath over legacy file:// filtering", async () => {
+        const workspaceDirs = [
+          "vscode-remote://dev-container+abc123/workspace",
+          "file:///home/user/workspace",
+        ];
+        mockGetWorkspaceDirs.mockResolvedValue(workspaceDirs);
+        mockUriToFsPath.mockResolvedValue("/workspace");
+
+        const extras = createMockExtras({ remoteName: "dev-container" });
+
+        await expect(
+          runTerminalCommandImpl(
+            { command: "echo test", waitForCompletion: true },
+            extras,
+          ),
+        ).resolves.toBeDefined();
+
+        // Should use uriToFsPath on the first URI, not filter for file://
+        expect(mockUriToFsPath).toHaveBeenCalledWith(workspaceDirs[0]);
+      });
     });
 
     describe("fallback behavior", () => {
@@ -798,5 +889,155 @@ describe("runTerminalCommandTool.evaluateToolCallPolicy", () => {
     );
 
     expect(result).toBe("allowedWithPermission");
+  });
+});
+
+describe("runTerminalCommandImpl - SSH Remote Environment", () => {
+  // Reuse the same setup from the main describe block
+  const mockGetIdeInfo = vi.fn();
+  const mockGetWorkspaceDirs = vi.fn();
+  const mockUriToFsPath = vi.fn();
+  const mockRunCommand = vi.fn();
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  // Helper function to create a ToolExtras object (same as main describe)
+  const createMockExtras = (
+    overrides: Partial<{
+      onPartialOutput?: any;
+      remoteName?: string;
+    }> = {},
+  ): ToolExtras => {
+    if (overrides.remoteName) {
+      mockGetIdeInfo.mockReturnValue(
+        Promise.resolve({ remoteName: overrides.remoteName }),
+      );
+    } else {
+      mockGetIdeInfo.mockReturnValue(Promise.resolve({ remoteName: "" }));
+    }
+
+    mockGetWorkspaceDirs.mockReturnValue(Promise.resolve(["file:///tmp/test"]));
+    mockUriToFsPath.mockImplementation(async (uri: string) => {
+      if (uri.startsWith("file://")) {
+        return fileURLToPath(uri);
+      }
+      if (uri.startsWith("vscode-remote://")) {
+        const match = uri.match(/vscode-remote:\/\/[^/]+(.+)/);
+        return match ? match[1] : "/";
+      }
+      return uri;
+    });
+
+    const mockIde = {
+      getIdeInfo: mockGetIdeInfo,
+      getWorkspaceDirs: mockGetWorkspaceDirs,
+      uriToFsPath: mockUriToFsPath,
+      runCommand: mockRunCommand,
+      getIdeSettings: vi.fn(),
+      getDiff: vi.fn(),
+      getClipboardContent: vi.fn(),
+      isTelemetryEnabled: vi.fn(),
+      readFile: vi.fn(),
+      writeFile: vi.fn(),
+      renameFile: vi.fn(),
+      deleteFile: vi.fn(),
+      globFiles: vi.fn(),
+      ls: vi.fn(),
+    };
+
+    return {
+      ide: mockIde as unknown as IDE,
+      llm: {} as any,
+      fetch: {} as any,
+      tool: {} as any,
+      toolCallId: "test-tool-call",
+      ...(overrides.onPartialOutput && {
+        onPartialOutput: overrides.onPartialOutput,
+      }),
+    } as ToolExtras;
+  };
+
+  describe("SSH Remote Environment", () => {
+    it("delegates to IDE.runCommand in ssh-remote environment", async () => {
+      const mockRunCommand = vi.fn().mockResolvedValue(undefined);
+      const mockGetIdeInfo = vi
+        .fn()
+        .mockResolvedValue({ remoteName: "ssh-remote" });
+      const mockGetWorkspaceDirs = vi
+        .fn()
+        .mockResolvedValue(["vscode-remote://ssh-remote+whatever/workspace"]);
+      const mockUriToFsPath = vi.fn().mockResolvedValue("/workspace");
+
+      // Spy on child_process.spawn to ensure it's never called
+      const spawnSpy = vi.spyOn(childProcess, "spawn");
+
+      // Create extras using the helper from the outer describe block
+      const extras = createMockExtras({ remoteName: "ssh-remote" });
+      // Override the IDE mock to use our specific mocks
+      (extras.ide as any).getIdeInfo = mockGetIdeInfo;
+      (extras.ide as any).getWorkspaceDirs = mockGetWorkspaceDirs;
+      (extras.ide as any).uriToFsPath = mockUriToFsPath;
+      (extras.ide as any).runCommand = mockRunCommand;
+
+      const result = await runTerminalCommandImpl(
+        { command: "echo hello", waitForCompletion: true },
+        extras,
+      );
+
+      // Verify runCommand was called with the command
+      expect(mockRunCommand).toHaveBeenCalledWith(
+        "echo hello",
+        expect.objectContaining({
+          reuseTerminal: true,
+          cwd: "/workspace",
+        }),
+      );
+
+      // Verify spawn was never called
+      expect(spawnSpy).not.toHaveBeenCalled();
+
+      // Verify we returned a single Terminal ToolResult
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("Terminal");
+      expect(result[0].description).toBe(
+        "Command executed via IDE (remote environment)",
+      );
+      expect(result[0].status).toBe("completed");
+
+      spawnSpy.mockRestore();
+    });
+
+    it("uses spawn in local environment", async () => {
+      const mockGetIdeInfo = vi.fn().mockResolvedValue({ remoteName: "" });
+      const mockGetWorkspaceDirs = vi
+        .fn()
+        .mockResolvedValue(["file:///Users/test/projects/foo"]);
+      const mockRunCommand = vi.fn();
+
+      const spawnSpy = vi.spyOn(childProcess, "spawn");
+
+      const extras = createMockExtras({ remoteName: "" });
+      // Override the IDE mock
+      (extras.ide as any).getIdeInfo = mockGetIdeInfo;
+      (extras.ide as any).getWorkspaceDirs = mockGetWorkspaceDirs;
+      (extras.ide as any).runCommand = mockRunCommand;
+
+      // Use a simple command that will succeed
+      const command = `node -e "console.log('test')"`;
+      await runTerminalCommandImpl(
+        { command, waitForCompletion: true },
+        extras,
+      );
+
+      // Verify spawn was called
+      expect(spawnSpy).toHaveBeenCalled();
+
+      // Verify runCommand was NOT called
+      expect(mockRunCommand).not.toHaveBeenCalled();
+
+      spawnSpy.mockRestore();
+    });
   });
 });

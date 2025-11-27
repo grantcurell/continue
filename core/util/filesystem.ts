@@ -192,6 +192,17 @@ class FileSystemIde implements IDE {
     return Promise.resolve([this.workspaceDir]);
   }
 
+  async uriToFsPath(uri: string): Promise<string> {
+    // If the adapter already returns filesystem paths in getWorkspaceDirs(),
+    // just pass-through. If it's a file:// URI, convert it.
+    if (uri.startsWith("file://")) {
+      const { fileURLToPath } = await import("node:url");
+      return fileURLToPath(uri);
+    }
+    // Otherwise, assume it's already a filesystem path
+    return uri;
+  }
+
   writeFile(fileUri: string, contents: string): Promise<void> {
     const filepath = fileURLToPath(fileUri);
     return new Promise((resolve, reject) => {

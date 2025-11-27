@@ -30,7 +30,17 @@ exec(command, (error) => {
   if (error) {
     throw error;
   }
-  console.log(
-    `vsce package completed - extension created at extensions/vscode/build/continue-${version}.vsix`,
-  );
+  // Rename to this_sucks_ass.vsix
+  const oldPath = `./build/continue-${version}.vsix`;
+  const newPath = `./build/this_sucks_ass.vsix`;
+  if (fs.existsSync(oldPath)) {
+    fs.renameSync(oldPath, newPath);
+    console.log(
+      `vsce package completed - extension created at extensions/vscode/build/this_sucks_ass.vsix`,
+    );
+  } else {
+    console.log(
+      `vsce package completed - extension created at extensions/vscode/build/continue-${version}.vsix`,
+    );
+  }
 });
