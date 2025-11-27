@@ -13,9 +13,9 @@ This patch simplifies `run_terminal_command` to delegate to VS Code's terminal A
 ### 1. Clone and Checkout
 
 ```bash
-git clone https://github.com/continuedev/continue.git
+git clone https://github.com/grantcurell/continue.git
 cd continue
-git checkout 41e3d7d05  # Or the latest commit with this patch
+git checkout main  # Or the latest commit with this patch
 ```
 
 ### 2. Install Dependencies
